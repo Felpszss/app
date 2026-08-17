@@ -3,17 +3,10 @@ import { getDb } from "../../../db";
 import { events, communityMembers } from "../../../db/schema";
 import { getAppUser } from "../../../lib/auth";
 import { toSqliteTimestamp } from "../../../lib/scoring";
+import { eventStatus, computeEventRanking, validateEventFields } from "../../../lib/events";
 import { toRouteErrorMessage } from "../../../lib/route-errors";
 
-const MAX_EVENT_DURATION_DAYS = 30;
 const MAX_EVENTS_PER_COMMUNITY = 50;
-
-function eventStatus(startsAt: string, endsAt: string, now = new Date()): "upcoming" | "active" | "ended" {
-  const nowIso = toSqliteTimestamp(now);
-  if (nowIso < startsAt) return "upcoming";
-  if (nowIso > endsAt) return "ended";
-  return "active";
-}
 
 export async function GET(request: Request) {
   try {
@@ -41,9 +34,16 @@ export async function GET(request: Request) {
       .orderBy(desc(events.startsAt))
       .limit(MAX_EVENTS_PER_COMMUNITY);
 
-    return Response.json({
-      events: rows.map((e) => ({ ...e, status: eventStatus(e.startsAt, e.endsAt) })),
-    });
+    const withStatus = await Promise.all(
+      rows.map(async (e) => {
+        const status = eventStatus(e.startsAt, e.endsAt);
+        if (status !== "ended") return { ...e, status, winner: null };
+        const ranking = await computeEventRanking(db, e.communityId, e.startsAt, e.endsAt);
+        return { ...e, status, winner: ranking[0] ?? null };
+      })
+    );
+
+    return Response.json({ events: withStatus });
   } catch (error) {
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }
@@ -63,28 +63,11 @@ export async function POST(request: Request) {
     };
 
     const communityId = payload.communityId;
-    const name = payload.name?.trim();
-    const prize = payload.prize?.trim() || null;
     if (!communityId) return Response.json({ error: "communityId é obrigatório." }, { status: 400 });
-    if (!name || name.length > 60) {
-      return Response.json({ error: "Nome do evento é obrigatório (até 60 caracteres)." }, { status: 400 });
-    }
-    if (prize && prize.length > 200) {
-      return Response.json({ error: "Descrição do prêmio muito longa (até 200 caracteres)." }, { status: 400 });
-    }
 
-    const startsAtDate = payload.startsAt ? new Date(payload.startsAt) : null;
-    const endsAtDate = payload.endsAt ? new Date(payload.endsAt) : null;
-    if (!startsAtDate || Number.isNaN(startsAtDate.getTime()) || !endsAtDate || Number.isNaN(endsAtDate.getTime())) {
-      return Response.json({ error: "Datas de início e fim inválidas." }, { status: 400 });
-    }
-    if (endsAtDate <= startsAtDate) {
-      return Response.json({ error: "A data de término deve ser depois do início." }, { status: 400 });
-    }
-    const durationDays = (endsAtDate.getTime() - startsAtDate.getTime()) / (1000 * 60 * 60 * 24);
-    if (durationDays > MAX_EVENT_DURATION_DAYS) {
-      return Response.json({ error: `Eventos podem durar no máximo ${MAX_EVENT_DURATION_DAYS} dias.` }, { status: 400 });
-    }
+    const validated = validateEventFields(payload);
+    if ("error" in validated) return Response.json({ error: validated.error }, { status: 400 });
+    const { name, prize, startsAt, endsAt } = validated.fields;
 
     const db = getDb();
     const membership = await db
@@ -105,8 +88,8 @@ export async function POST(request: Request) {
         communityId,
         name,
         prize,
-        startsAt: toSqliteTimestamp(startsAtDate),
-        endsAt: toSqliteTimestamp(endsAtDate),
+        startsAt: toSqliteTimestamp(startsAt),
+        endsAt: toSqliteTimestamp(endsAt),
         createdBy: user.id,
       })
       .returning();

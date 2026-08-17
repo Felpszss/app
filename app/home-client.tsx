@@ -19,15 +19,17 @@ type Drink = { id: number; icon: string; name: string; abv: number; note?: strin
 type DrinkGroup = { title: string; items: Drink[] };
 type Community = { id: number; name: string; icon: string; inviteCode: string; memberCount: number; role?: string };
 type EventStatus = "upcoming" | "active" | "ended";
+type EventRankingEntry = { userId: number; name: string; initials: string; points: number };
 type BeerRatsEvent = {
   id: number;
+  communityId: number;
   name: string;
   prize: string | null;
   startsAt: string;
   endsAt: string;
   status: EventStatus;
+  winner?: EventRankingEntry | null;
 };
-type EventRankingEntry = { userId: number; name: string; initials: string; points: number };
 type FeedItem = {
   id: number;
   title: string;
@@ -189,51 +191,107 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
   }
 
   useEffect(() => {
-    if (screen === "communities" || screen === "events") loadEvents();
+    if (screen === "feed" || screen === "communities" || screen === "events") loadEvents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, activeCommunityId]);
 
-  useEffect(() => {
-    if (screen !== "event" || !selectedEventId) return;
+  function loadEventDetail() {
+    if (!selectedEventId) return;
     apiJson<{ event: BeerRatsEvent; ranking: EventRankingEntry[] }>(`/api/events/${selectedEventId}`)
       .then(setEventDetail)
       .catch(() => setEventDetail(null));
+  }
+
+  useEffect(() => {
+    if (screen !== "event") return;
+    loadEventDetail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, selectedEventId]);
 
-  async function createEvent() {
-    if (!activeCommunityId) return;
-    const name = window.prompt("Nome do evento:");
-    if (!name?.trim()) return;
-    const prize = window.prompt("Prêmio para o topo do ranking (opcional):") ?? "";
-    const daysUntilStartRaw = window.prompt("Em quantos dias o evento começa?", "0");
-    if (daysUntilStartRaw === null) return;
-    const durationDaysRaw = window.prompt("Quantos dias o evento vai durar?", "1");
-    if (durationDaysRaw === null) return;
+  function promptEventFields(defaults: { name: string; prize: string; daysUntilStart: string; durationDays: string }) {
+    const name = window.prompt("Nome do evento:", defaults.name);
+    if (!name?.trim()) return null;
+    const prize = window.prompt("Prêmio para o topo do ranking (opcional):", defaults.prize) ?? "";
+    const daysUntilStartRaw = window.prompt("Em quantos dias o evento começa?", defaults.daysUntilStart);
+    if (daysUntilStartRaw === null) return null;
+    const durationDaysRaw = window.prompt("Quantos dias o evento vai durar?", defaults.durationDays);
+    if (durationDaysRaw === null) return null;
 
     const daysUntilStart = Number(daysUntilStartRaw);
     const durationDays = Number(durationDaysRaw);
     if (!Number.isFinite(daysUntilStart) || daysUntilStart < 0 || !Number.isFinite(durationDays) || durationDays <= 0) {
       window.alert("Dias inválidos.");
-      return;
+      return null;
     }
 
     const startsAt = new Date(Date.now() + daysUntilStart * 86400000);
     const endsAt = new Date(startsAt.getTime() + durationDays * 86400000);
+    return { name: name.trim(), prize: prize.trim(), startsAt, endsAt };
+  }
+
+  async function createEvent() {
+    if (!activeCommunityId) return;
+    const fields = promptEventFields({ name: "", prize: "", daysUntilStart: "0", durationDays: "1" });
+    if (!fields) return;
 
     try {
       await apiJson("/api/events", {
         method: "POST",
         body: JSON.stringify({
           communityId: activeCommunityId,
-          name: name.trim(),
-          prize: prize.trim() || undefined,
-          startsAt: startsAt.toISOString(),
-          endsAt: endsAt.toISOString(),
+          name: fields.name,
+          prize: fields.prize || undefined,
+          startsAt: fields.startsAt.toISOString(),
+          endsAt: fields.endsAt.toISOString(),
         }),
       });
       loadEvents();
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Erro ao criar evento.");
+    }
+  }
+
+  async function editEvent() {
+    if (!eventDetail) return;
+    const ev = eventDetail.event;
+    const startsAtMs = parseUtc(ev.startsAt).getTime();
+    const endsAtMs = parseUtc(ev.endsAt).getTime();
+    const fields = promptEventFields({
+      name: ev.name,
+      prize: ev.prize ?? "",
+      daysUntilStart: Math.max(0, Math.round((startsAtMs - Date.now()) / 86400000)).toString(),
+      durationDays: Math.max(1, Math.round((endsAtMs - startsAtMs) / 86400000)).toString(),
+    });
+    if (!fields) return;
+
+    try {
+      await apiJson(`/api/events/${ev.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: fields.name,
+          prize: fields.prize || undefined,
+          startsAt: fields.startsAt.toISOString(),
+          endsAt: fields.endsAt.toISOString(),
+        }),
+      });
+      loadEventDetail();
+      loadEvents();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Erro ao editar evento.");
+    }
+  }
+
+  async function cancelEvent() {
+    if (!eventDetail) return;
+    if (!window.confirm(`Cancelar o evento "${eventDetail.event.name}"? Essa ação não pode ser desfeita.`)) return;
+    try {
+      await apiJson(`/api/events/${eventDetail.event.id}`, { method: "DELETE" });
+      setEventDetail(null);
+      setSelectedEventId(null);
+      setScreen("events");
+      loadEvents();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Erro ao cancelar evento.");
     }
   }
 
@@ -715,9 +773,13 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
               key={ev.id}
               icon="🏆"
               name={ev.name}
-              meta={`${EVENT_STATUS_LABEL[ev.status]} · ${formatEventDate(ev.startsAt)} – ${formatEventDate(ev.endsAt)}${
-                ev.prize ? ` · 🎁 ${ev.prize}` : ""
-              }`}
+              meta={
+                ev.status === "ended"
+                  ? `Encerrado${ev.winner ? ` · vencedor: ${ev.winner.name} (${ev.winner.points} pts)` : ""}`
+                  : `${EVENT_STATUS_LABEL[ev.status]} · ${formatEventDate(ev.startsAt)} – ${formatEventDate(ev.endsAt)}${
+                      ev.prize ? ` · 🎁 ${ev.prize}` : ""
+                    }`
+              }
               onClick={() => {
                 setSelectedEventId(ev.id);
                 setScreen("event");
@@ -758,6 +820,39 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
                   ) : null}
                 </p>
               </div>
+              {activeCommunity?.id === eventDetail.event.communityId &&
+                (activeCommunity.role === "owner" || user.isAdmin) && (
+                  <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                    <button
+                      onClick={editEvent}
+                      style={{
+                        flex: 1,
+                        height: 44,
+                        border: 0,
+                        borderRadius: 12,
+                        background: "#00000040",
+                        color: "white",
+                        fontWeight: 700,
+                      }}
+                    >
+                      Editar
+                    </button>
+                    <button
+                      onClick={cancelEvent}
+                      style={{
+                        flex: 1,
+                        height: 44,
+                        border: 0,
+                        borderRadius: 12,
+                        background: "#00000040",
+                        color: "var(--red)",
+                        fontWeight: 700,
+                      }}
+                    >
+                      Cancelar evento
+                    </button>
+                  </div>
+                )}
             </section>
             <p className="list-title">Classificação do evento</p>
             <div className="rank-card">
@@ -788,6 +883,12 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
   const myScore = ranking?.ranking.find((r) => r.userId === user.id);
   const leader = ranking?.ranking[0];
 
+  const highlightedEvent = events?.find((ev) => {
+    if (ev.status === "active") return true;
+    if (ev.status === "upcoming") return parseUtc(ev.startsAt).getTime() - Date.now() <= 24 * 60 * 60 * 1000;
+    return false;
+  });
+
   return (
     <Phone>
       <header className="group-header">
@@ -803,6 +904,29 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
       </header>
       <h1 className="group-name">{(activeCommunity?.name ?? "BeerRats").toUpperCase()}</h1>
       {notice && <p className="tiny-warning">{notice}</p>}
+      {screen === "feed" && highlightedEvent && (
+        <button
+          onClick={() => {
+            setSelectedEventId(highlightedEvent.id);
+            setScreen("event");
+          }}
+          style={{
+            display: "block",
+            width: "100%",
+            textAlign: "left",
+            border: 0,
+            borderRadius: 14,
+            background: "#33130f",
+            color: "white",
+            padding: "12px 16px",
+            marginBottom: 14,
+          }}
+        >
+          🏆 {highlightedEvent.status === "active" ? "Rolando agora: " : "Começa em breve: "}
+          <b>{highlightedEvent.name}</b>
+          {highlightedEvent.prize ? ` · 🎁 ${highlightedEvent.prize}` : ""}
+        </button>
+      )}
       {screen === "feed" && (
         <>
           {!activeCommunityId && (
