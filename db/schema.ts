@@ -46,6 +46,19 @@ export const communityMembers = sqliteTable("community_members", {
   userIdx: index("community_members_user_idx").on(t.userId),
 }));
 
+export const events = sqliteTable("events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  communityId: integer("community_id").notNull().references(() => communities.id),
+  name: text("name").notNull(),
+  prize: text("prize"),
+  startsAt: text("starts_at").notNull(),
+  endsAt: text("ends_at").notNull(),
+  createdBy: integer("created_by").notNull().references(() => users.id),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (t) => ({
+  communityIdx: index("events_community_idx").on(t.communityId, t.startsAt),
+}));
+
 export const checkins = sqliteTable("checkins", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull().references(() => users.id),

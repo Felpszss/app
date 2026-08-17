@@ -2,11 +2,32 @@
 
 import { ChangeEvent, useEffect, useState } from "react";
 
-type Screen = "feed" | "ranking" | "communities" | "chat" | "profile" | "settings" | "checkin" | "drinks" | "quantity";
+type Screen =
+  | "feed"
+  | "ranking"
+  | "communities"
+  | "chat"
+  | "profile"
+  | "settings"
+  | "checkin"
+  | "drinks"
+  | "quantity"
+  | "events"
+  | "event";
 
 type Drink = { id: number; icon: string; name: string; abv: number; note?: string | null };
 type DrinkGroup = { title: string; items: Drink[] };
-type Community = { id: number; name: string; icon: string; inviteCode: string; memberCount: number };
+type Community = { id: number; name: string; icon: string; inviteCode: string; memberCount: number; role?: string };
+type EventStatus = "upcoming" | "active" | "ended";
+type BeerRatsEvent = {
+  id: number;
+  name: string;
+  prize: string | null;
+  startsAt: string;
+  endsAt: string;
+  status: EventStatus;
+};
+type EventRankingEntry = { userId: number; name: string; initials: string; points: number };
 type FeedItem = {
   id: number;
   title: string;
@@ -43,6 +64,18 @@ function parseUtc(value: string): Date {
 function formatDayLabel(value: string): string {
   return new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "short" }).format(parseUtc(value));
 }
+
+function formatEventDate(value: string): string {
+  return new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(
+    parseUtc(value)
+  );
+}
+
+const EVENT_STATUS_LABEL: Record<EventStatus, string> = {
+  upcoming: "Em breve",
+  active: "Rolando agora",
+  ended: "Encerrado",
+};
 
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(parseUtc(value));
@@ -86,6 +119,10 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  const [events, setEvents] = useState<BeerRatsEvent[] | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
+  const [eventDetail, setEventDetail] = useState<{ event: BeerRatsEvent; ranking: EventRankingEntry[] } | null>(null);
 
   useEffect(() => {
     apiJson<{ mine: Community[]; trending: Community[] }>("/api/communities")
@@ -140,6 +177,65 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
     loadRanking();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCommunityId]);
+
+  function loadEvents() {
+    if (!activeCommunityId) {
+      setEvents([]);
+      return;
+    }
+    apiJson<{ events: BeerRatsEvent[] }>(`/api/events?communityId=${activeCommunityId}`)
+      .then((data) => setEvents(data.events))
+      .catch(() => setEvents([]));
+  }
+
+  useEffect(() => {
+    if (screen === "communities" || screen === "events") loadEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, activeCommunityId]);
+
+  useEffect(() => {
+    if (screen !== "event" || !selectedEventId) return;
+    apiJson<{ event: BeerRatsEvent; ranking: EventRankingEntry[] }>(`/api/events/${selectedEventId}`)
+      .then(setEventDetail)
+      .catch(() => setEventDetail(null));
+  }, [screen, selectedEventId]);
+
+  async function createEvent() {
+    if (!activeCommunityId) return;
+    const name = window.prompt("Nome do evento:");
+    if (!name?.trim()) return;
+    const prize = window.prompt("Prêmio para o topo do ranking (opcional):") ?? "";
+    const daysUntilStartRaw = window.prompt("Em quantos dias o evento começa?", "0");
+    if (daysUntilStartRaw === null) return;
+    const durationDaysRaw = window.prompt("Quantos dias o evento vai durar?", "1");
+    if (durationDaysRaw === null) return;
+
+    const daysUntilStart = Number(daysUntilStartRaw);
+    const durationDays = Number(durationDaysRaw);
+    if (!Number.isFinite(daysUntilStart) || daysUntilStart < 0 || !Number.isFinite(durationDays) || durationDays <= 0) {
+      window.alert("Dias inválidos.");
+      return;
+    }
+
+    const startsAt = new Date(Date.now() + daysUntilStart * 86400000);
+    const endsAt = new Date(startsAt.getTime() + durationDays * 86400000);
+
+    try {
+      await apiJson("/api/events", {
+        method: "POST",
+        body: JSON.stringify({
+          communityId: activeCommunityId,
+          name: name.trim(),
+          prize: prize.trim() || undefined,
+          startsAt: startsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
+        }),
+      });
+      loadEvents();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Erro ao criar evento.");
+    }
+  }
 
   function onPhoto(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -551,6 +647,15 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
               <small>Use um convite</small>
             </span>
           </button>
+          {activeCommunity && (
+            <button style={{ gridColumn: "1 / -1" }} onClick={() => setScreen("events")}>
+              <b>🏆</b>
+              <span>
+                Eventos do BeerRats
+                <small>Desafios com prêmio em {activeCommunity.name}</small>
+              </span>
+            </button>
+          )}
         </div>
         <p className="menu-label">Minhas comunidades</p>
         <section className="community-list">
@@ -580,6 +685,103 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
           ))}
         </section>
         <BottomNav screen={screen} setScreen={setScreen} />
+      </Phone>
+    );
+
+  if (screen === "events")
+    return (
+      <Phone>
+        <header className="nav-head">
+          <button onClick={() => setScreen("communities")}>‹</button>
+          <h1>Eventos</h1>
+          {activeCommunity && (activeCommunity.role === "owner" || user.isAdmin) ? (
+            <button className="red" onClick={createEvent}>
+              ＋
+            </button>
+          ) : (
+            <span />
+          )}
+        </header>
+        <p className="list-title">{activeCommunity?.name ?? "Eventos"}</p>
+        <section className="community-list">
+          {!events && <p className="tiny-warning">Carregando eventos…</p>}
+          {events?.length === 0 && (
+            <p className="tiny-warning" style={{ padding: "16px 0" }}>
+              Nenhum evento agendado ainda.
+            </p>
+          )}
+          {events?.map((ev) => (
+            <CommunityRow
+              key={ev.id}
+              icon="🏆"
+              name={ev.name}
+              meta={`${EVENT_STATUS_LABEL[ev.status]} · ${formatEventDate(ev.startsAt)} – ${formatEventDate(ev.endsAt)}${
+                ev.prize ? ` · 🎁 ${ev.prize}` : ""
+              }`}
+              onClick={() => {
+                setSelectedEventId(ev.id);
+                setScreen("event");
+              }}
+            />
+          ))}
+        </section>
+        <p className="tiny-warning">
+          O ranking do evento soma os pontos dos check-ins feitos dentro do período, com o mesmo limite diário do ranking normal.
+        </p>
+      </Phone>
+    );
+
+  if (screen === "event")
+    return (
+      <Phone>
+        <header className="nav-head">
+          <button onClick={() => setScreen("events")}>‹</button>
+          <h1>{eventDetail?.event.name ?? "Evento"}</h1>
+          <span />
+        </header>
+        {!eventDetail ? (
+          <p className="tiny-warning">Carregando…</p>
+        ) : (
+          <>
+            <section className="community-hero">
+              <div>
+                <span>🏆</span>
+                <h2>{eventDetail.event.name}</h2>
+                <p>
+                  {EVENT_STATUS_LABEL[eventDetail.event.status]} · {formatEventDate(eventDetail.event.startsAt)} até{" "}
+                  {formatEventDate(eventDetail.event.endsAt)}
+                  {eventDetail.event.prize ? (
+                    <>
+                      <br />
+                      🎁 Prêmio: {eventDetail.event.prize}
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            </section>
+            <p className="list-title">Classificação do evento</p>
+            <div className="rank-card">
+              {eventDetail.ranking.length === 0 && (
+                <p className="tiny-warning" style={{ padding: "16px 0" }}>
+                  Nenhum check-in registrado nesse evento ainda.
+                </p>
+              )}
+              {eventDetail.ranking.map((p, i) => (
+                <div className="person" key={p.userId}>
+                  <Avatar text={p.initials} />
+                  <span>
+                    <b>
+                      {p.name}
+                      {p.userId === user.id ? " (você)" : ""}
+                    </b>
+                    <small>{p.points} pontos</small>
+                  </span>
+                  <em>{i + 1}º</em>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </Phone>
     );
 

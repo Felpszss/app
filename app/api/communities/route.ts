@@ -21,7 +21,11 @@ export async function GET() {
     const db = getDb();
 
     const memberships = await db
-      .select({ community: communities, memberCount: sql<number>`(select count(*) from ${communityMembers} cm where cm.community_id = ${communities.id})` })
+      .select({
+        community: communities,
+        role: communityMembers.role,
+        memberCount: sql<number>`(select count(*) from ${communityMembers} cm where cm.community_id = ${communities.id})`,
+      })
       .from(communityMembers)
       .innerJoin(communities, eq(communityMembers.communityId, communities.id))
       .where(eq(communityMembers.userId, user.id));
@@ -39,7 +43,7 @@ export async function GET() {
     const trending = trendingRaw.filter((t) => !myCommunityIds.includes(t.community.id)).slice(0, 5);
 
     return Response.json({
-      mine: memberships.map((m) => ({ ...m.community, memberCount: m.memberCount })),
+      mine: memberships.map((m) => ({ ...m.community, memberCount: m.memberCount, role: m.role })),
       trending: trending.map((t) => ({ ...t.community, memberCount: t.memberCount })),
     });
   } catch (error) {

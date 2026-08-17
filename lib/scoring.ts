@@ -70,3 +70,9 @@ export function capDailyPoints(dailyRawTotal: number): number {
 export function parseSqliteTimestamp(value: string): Date {
   return new Date(`${value.replace(" ", "T")}Z`);
 }
+
+// Inverse of parseSqliteTimestamp — formats a Date the same way SQLite's
+// CURRENT_TIMESTAMP does, so stored values stay lexically comparable.
+export function toSqliteTimestamp(date: Date): string {
+  return date.toISOString().slice(0, 19).replace("T", " ");
+}

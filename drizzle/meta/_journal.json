@@ -8,6 +8,13 @@
       "when": 1786984293650,
       "tag": "0000_deep_medusa",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786985870896,
+      "tag": "0001_spooky_penance",
+      "breakpoints": true
     }
   ]
 }
