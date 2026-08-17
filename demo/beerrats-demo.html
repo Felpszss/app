@@ -177,6 +177,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .modal-actions button{flex:1;height:46px;border:0;border-radius:10px;font-weight:700;font-size:15px}
 .modal-cancel{background:#2a2a2d;color:white}
 .modal-ok{background:var(--red);color:white}
+.chat-dock{position:fixed;bottom:92px;left:50%;transform:translateX(-50%);width:min(calc(100% - 36px),444px);height:52px;background:var(--card);border-radius:28px;display:flex;padding:5px;z-index:11}
+.chat-dock input{flex:1;background:transparent;border:0;outline:0;color:white;padding:0 14px}
+.chat-dock button{width:42px;border-radius:50%;border:0;background:var(--red);color:white;font-size:22px;flex:0 0 auto}
+.chat-messages{padding:8px 0 90px;display:flex;flex-direction:column;gap:10px}
+.chat-msg{background:var(--card);border-radius:14px;padding:10px 14px;max-width:85%}
+.chat-msg b{font-size:13px;color:#eab15d;display:block;margin-bottom:3px}
+.chat-msg p{margin:0;font-size:15px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.chat-msg time{display:block;margin-top:4px;font-size:11px;color:#77777c}
+.header-actions button.has-events{color:var(--red)}
 @media(min-width:600px){
   body{background:#151517}
   .phone{box-shadow:0 0 80px #000;min-height:950px;padding-top:14px;margin-top:24px;border-radius:30px 30px 0 0}
@@ -252,6 +261,7 @@ const state = {
   nextEventId: 1,
   period: "Semana",
   selectedEventId: null,
+  chats: {},
   form: { photoPreview: null, drinkId: null, amount: "350", unit: "ml", title: "", description: "" },
   formError: null,
   published: false,
@@ -404,6 +414,21 @@ function onPhoto(input) {
 function pickDrink(id) { state.form.drinkId = id; setScreen("checkin"); }
 function pickUnit(u) { state.form.unit = u; render(); }
 
+function sendChatMessage() {
+  const community = activeCommunity();
+  if (!community) return;
+  const input = document.getElementById("chat-input");
+  const text = input ? input.value.trim() : "";
+  if (!text) return;
+  const list = state.chats[community.id] || (state.chats[community.id] = []);
+  list.push({ id: list.length + 1, author: state.user.displayName, initials: state.user.initials, text, createdAt: new Date() });
+  render();
+}
+
+function openEventsOrCommunities() {
+  setScreen(state.activeCommunityId ? "events" : "communities");
+}
+
 function publishCheckin() {
   const title = state.form.title.trim();
   const description = state.form.description.trim();
@@ -447,7 +472,11 @@ function publishCheckin() {
   setTimeout(() => {
     state.published = false;
     state.form = { photoPreview: null, drinkId: null, amount: "350", unit: "ml", title: "", description: "" };
-    setScreen("feed");
+    // Only auto-return to the feed if the user is still on the check-in
+    // screen — if they already navigated elsewhere (e.g. to Ranking) in
+    // the meantime, this used to yank them back to the feed.
+    if (state.screen === "checkin") setScreen("feed");
+    else render();
   }, 1200);
 }
 
@@ -700,15 +729,23 @@ function screenSettings() {
 }
 
 function screenChat() {
+  const community = activeCommunity();
+  const messages = community ? state.chats[community.id] || [] : [];
   return `<div class="phone">
     <header class="group-header"><button class="avatar-button" data-action="nav" data-screen="profile">${Avatar(state.user.initials)}</button>
-      <div class="header-actions"><button data-action="nav" data-screen="communities">♧</button><button>•••</button></div>
+      <div class="header-actions"><button data-action="nav" data-screen="communities">♧</button><button data-action="open-events" title="Eventos do BeerRats">🏆</button></div>
     </header>
-    <h1 class="group-name">${(activeCommunity()?.name ?? "BeerRats").toUpperCase()}</h1>
-    <section class="chat-empty">
-      <span>💬</span><h2>Bate-papo do grupo</h2><p>Combine o próximo encontro com a galera.</p>
-      <div><input placeholder="Escrever mensagem..." /><button>↑</button></div>
-    </section>
+    <h1 class="group-name">${esc((community?.name ?? "BeerRats").toUpperCase())}</h1>
+    ${
+      !community
+        ? `<section class="community-hero"><div><span>🍻</span><h2>Entre em uma comunidade</h2><p>Crie ou entre em uma comunidade para conversar com a galera.</p></div><button data-action="nav" data-screen="communities">Ver comunidades</button></section>`
+        : messages.length === 0
+        ? `<section class="chat-empty"><span>💬</span><h2>Bate-papo do grupo</h2><p>Combine o próximo encontro com a galera.</p></section>`
+        : `<div class="chat-messages">${messages
+            .map((m) => `<div class="chat-msg"><b>${esc(m.author)}</b><p>${esc(m.text)}</p><time>${fmtTime(m.createdAt)}</time></div>`)
+            .join("")}</div>`
+    }
+    ${community ? `<div class="chat-dock"><input id="chat-input" placeholder="Escrever mensagem..." onkeydown="if(event.key==='Enter')sendChatMessage()" /><button data-action="send-chat">↑</button></div>` : ""}
     ${BottomNav("chat")}
   </div>`;
 }
@@ -768,7 +805,7 @@ function screenFeedOrRanking() {
   return `<div class="phone">
     <header class="group-header">
       <button class="avatar-button" data-action="nav" data-screen="profile">${Avatar(state.user.initials)}</button>
-      <div class="header-actions"><button data-action="nav" data-screen="communities">♧${events.length ? "<i></i>" : ""}</button><button>•••</button></div>
+      <div class="header-actions"><button data-action="nav" data-screen="communities">♧${events.length ? "<i></i>" : ""}</button><button data-action="open-events" title="Eventos do BeerRats">🏆</button></div>
     </header>
     <h1 class="group-name">${esc((community?.name ?? "BeerRats").toUpperCase())}</h1>
     ${state.notice ? `<p class="tiny-warning">${esc(state.notice)}</p>` : ""}
@@ -807,11 +844,12 @@ document.addEventListener("click", (e) => {
   else if (action === "pick-unit") pickUnit(el.dataset.unit);
   else if (action === "publish-checkin") publishCheckin();
   else if (action === "set-period") { state.period = el.dataset.period; render(); }
-  else if (action === "open-events") setScreen("events");
+  else if (action === "open-events") openEventsOrCommunities();
   else if (action === "create-event") createEvent();
   else if (action === "open-event") { state.selectedEventId = Number(el.dataset.id); setScreen("event"); }
   else if (action === "edit-event") editEvent();
   else if (action === "cancel-event") cancelEvent();
+  else if (action === "send-chat") sendChatMessage();
   else if (action === "alert-demo") alertModal("Isso é uma demo local — sair/entrar de verdade acontece pelo login do ChatGPT no app publicado.");
 });
 window.onPhoto = onPhoto;
