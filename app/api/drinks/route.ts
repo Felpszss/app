@@ -13,7 +13,13 @@ export async function GET() {
     const db = getDb();
     let rows = await db.select().from(drinks).where(eq(drinks.active, 1));
     if (rows.length === 0) {
-      await db.insert(drinks).values(DRINK_SEED.map((d) => ({ ...d, active: 1 })));
+      // D1 caps bound parameters per statement (~100), so the ~35-item seed
+      // catalog has to go in over multiple inserts rather than one.
+      const seedRows = DRINK_SEED.map((d) => ({ ...d, active: 1 }));
+      const CHUNK_SIZE = 15;
+      for (let i = 0; i < seedRows.length; i += CHUNK_SIZE) {
+        await db.insert(drinks).values(seedRows.slice(i, i + CHUNK_SIZE));
+      }
       rows = await db.select().from(drinks).where(eq(drinks.active, 1));
     }
 
