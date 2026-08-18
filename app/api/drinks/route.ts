@@ -5,7 +5,7 @@ import { DRINK_SEED } from "../../../lib/drink-seed";
 import { getAppUser } from "../../../lib/auth";
 import { toRouteErrorMessage } from "../../../lib/route-errors";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await getAppUser();
     if (!user) return Response.json({ error: "Não autenticado." }, { status: 401 });
@@ -21,6 +21,13 @@ export async function GET() {
         await db.insert(drinks).values(seedRows.slice(i, i + CHUNK_SIZE));
       }
       rows = await db.select().from(drinks).where(eq(drinks.active, 1));
+    }
+
+    const wantsAll = new URL(request.url).searchParams.get("all") === "1";
+    if (wantsAll) {
+      if (!user.isAdmin) return Response.json({ error: "Apenas administradores podem ver o catálogo completo." }, { status: 403 });
+      const allRows = await db.select().from(drinks);
+      return Response.json({ drinks: allRows });
     }
 
     const groups = new Map<string, typeof rows>();

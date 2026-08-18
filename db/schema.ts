@@ -6,6 +6,7 @@ export const users = sqliteTable("users", {
   email: text("email").notNull(),
   displayName: text("display_name").notNull(),
   isAdmin: integer("is_admin").notNull().default(0),
+  ageConfirmed: integer("age_confirmed").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (t) => ({
   emailIdx: uniqueIndex("users_email_idx").on(t.email),
@@ -71,6 +72,11 @@ export const checkins = sqliteTable("checkins", {
   amountMl: integer("amount_ml").notNull(),
   points: integer("points").notNull(),
   photoKey: text("photo_key").notNull(),
+  // 1 = an image model confirmed a drink is visible, null = unverified
+  // (no AI binding available, or it didn't return a confident answer).
+  // Never set to a hard 0 here — a confident "not a drink" is rejected
+  // before the check-in is ever inserted.
+  photoVerified: integer("photo_verified"),
   flagged: integer("flagged").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (t) => ({

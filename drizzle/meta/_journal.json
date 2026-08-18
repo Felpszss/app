@@ -15,6 +15,13 @@
       "when": 1786985870896,
       "tag": "0001_spooky_penance",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787070312572,
+      "tag": "0002_fixed_namorita",
+      "breakpoints": true
     }
   ]
 }

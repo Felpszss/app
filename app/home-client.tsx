@@ -13,9 +13,11 @@ type Screen =
   | "drinks"
   | "quantity"
   | "events"
-  | "event";
+  | "event"
+  | "catalog";
 
 type Drink = { id: number; icon: string; name: string; abv: number; note?: string | null };
+type AdminDrink = Drink & { category: string; active: number };
 type DrinkGroup = { title: string; items: Drink[] };
 type Community = { id: number; name: string; icon: string; inviteCode: string; memberCount: number; role?: string };
 type EventStatus = "upcoming" | "active" | "ended";
@@ -38,6 +40,7 @@ type FeedItem = {
   unitLabel: string;
   points: number;
   photoKey: string;
+  photoVerified: number | null;
   createdAt: string;
   drinkName: string;
   drinkIcon: string;
@@ -45,7 +48,7 @@ type FeedItem = {
   userInitials: string;
 };
 type RankingEntry = { userId: number; name: string; initials: string; points: number; wins: number };
-type AppUser = { id: number; email: string; displayName: string; isAdmin: boolean; initials: string };
+type AppUser = { id: number; email: string; displayName: string; isAdmin: boolean; ageConfirmed: boolean; initials: string };
 
 const PERIODS = ["Semana", "Mês", "Ano", "Todas"];
 
@@ -96,13 +99,15 @@ function groupFeedByDay(items: FeedItem[]): [string, FeedItem[]][] {
 
 export default function HomeClient({ initialUser, signOutPath }: { initialUser: AppUser; signOutPath: string }) {
   const [screen, setScreen] = useState<Screen>("feed");
-  const [user] = useState<AppUser>(initialUser);
+  const [user, setUser] = useState<AppUser>(initialUser);
+  const [confirmingAge, setConfirmingAge] = useState(false);
 
   const [communities, setCommunities] = useState<{ mine: Community[]; trending: Community[] } | null>(null);
   const [activeCommunityId, setActiveCommunityId] = useState<number | null>(null);
   const activeCommunity = communities?.mine.find((c) => c.id === activeCommunityId) ?? null;
 
   const [drinkGroups, setDrinkGroups] = useState<DrinkGroup[] | null>(null);
+  const [adminDrinks, setAdminDrinks] = useState<AdminDrink[] | null>(null);
 
   const [feed, setFeed] = useState<FeedItem[] | null>(null);
   const [feedError, setFeedError] = useState<string | null>(null);
@@ -194,6 +199,75 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
     if (screen === "feed" || screen === "communities" || screen === "events") loadEvents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, activeCommunityId]);
+
+  function loadAdminDrinks() {
+    apiJson<{ drinks: AdminDrink[] }>("/api/drinks?all=1")
+      .then((data) => setAdminDrinks(data.drinks))
+      .catch(() => setAdminDrinks([]));
+  }
+
+  useEffect(() => {
+    if (screen === "catalog" && user.isAdmin) loadAdminDrinks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen]);
+
+  async function createDrinkAdmin() {
+    const category = window.prompt("Categoria (ex.: Cervejas):");
+    if (!category?.trim()) return;
+    const name = window.prompt("Nome da bebida:");
+    if (!name?.trim()) return;
+    const icon = window.prompt("Ícone (um emoji):", "🍺");
+    if (!icon?.trim()) return;
+    const abvRaw = window.prompt("Teor alcoólico (%):", "5");
+    const abv = Number(abvRaw);
+    if (!Number.isFinite(abv) || abv < 0 || abv > 100) {
+      window.alert("Teor alcoólico inválido.");
+      return;
+    }
+    try {
+      await apiJson("/api/drinks", {
+        method: "POST",
+        body: JSON.stringify({ category: category.trim(), name: name.trim(), icon: icon.trim(), abv }),
+      });
+      loadAdminDrinks();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Erro ao criar bebida.");
+    }
+  }
+
+  async function editDrinkAdmin(drink: AdminDrink) {
+    const name = window.prompt("Nome da bebida:", drink.name);
+    if (!name?.trim()) return;
+    const category = window.prompt("Categoria:", drink.category);
+    if (!category?.trim()) return;
+    const abvRaw = window.prompt("Teor alcoólico (%):", String(drink.abv));
+    const abv = Number(abvRaw);
+    if (!Number.isFinite(abv) || abv < 0 || abv > 100) {
+      window.alert("Teor alcoólico inválido.");
+      return;
+    }
+    try {
+      await apiJson(`/api/drinks/${drink.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: name.trim(), category: category.trim(), abv }),
+      });
+      loadAdminDrinks();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Erro ao editar bebida.");
+    }
+  }
+
+  async function toggleDrinkActive(drink: AdminDrink) {
+    try {
+      await apiJson(`/api/drinks/${drink.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ active: drink.active !== 1 }),
+      });
+      loadAdminDrinks();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Erro ao atualizar bebida.");
+    }
+  }
 
   function loadEventDetail() {
     if (!selectedEventId) return;
@@ -390,6 +464,49 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
       window.alert(e instanceof Error ? e.message : "Erro ao entrar na comunidade.");
     }
   }
+
+  async function confirmAge() {
+    setConfirmingAge(true);
+    try {
+      const { user: updated } = await apiJson<{ user: AppUser }>("/api/me/confirm-age", {
+        method: "POST",
+        body: JSON.stringify({ confirmed: true }),
+      });
+      setUser(updated);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Erro ao confirmar.");
+    } finally {
+      setConfirmingAge(false);
+    }
+  }
+
+  if (!user.ageConfirmed)
+    return (
+      <Phone>
+        <div style={{ paddingTop: 70 }}>
+          <section className="community-hero" style={{ textAlign: "center" }}>
+            <div>
+              <span style={{ fontSize: 42 }}>🔞</span>
+              <h2>Conteúdo sobre bebidas alcoólicas</h2>
+              <p>
+                O BeerRats registra e ranqueia consumo de bebidas alcoólicas entre amigos. É
+                necessário ter 18 anos ou mais para usar o app. Beba com responsabilidade.
+              </p>
+            </div>
+            <button onClick={confirmAge} disabled={confirmingAge} style={{ width: "100%" }}>
+              {confirmingAge ? "Confirmando…" : "Tenho 18 anos ou mais"}
+            </button>
+          </section>
+          <p className="tiny-warning">
+            Se você tem menos de 18 anos, não continue e saia da conta pelo{" "}
+            <a href={signOutPath} style={{ color: "var(--red)" }}>
+              link de logout
+            </a>
+            . Se o consumo de álcool for uma preocupação, procure apoio: CVV 188 (24h, gratuito).
+          </p>
+        </div>
+      </Phone>
+    );
 
   if (screen === "checkin")
     return (
@@ -647,10 +764,11 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
           title="Preferências"
           items={[
             ["◫", "Unidades de consumo", "ml, L, doses e taças"],
-            ["♨", "Bebidas favoritas", "Editar catálogo"],
+            ["♨", "Bebidas favoritas", user.isAdmin ? "Editar catálogo" : "Somente leitura"],
             ["▣", "Histórico de check-ins", ""],
             ["文", "Idioma", "Português"],
           ]}
+          onClicks={user.isAdmin ? { "Bebidas favoritas": () => setScreen("catalog") } : undefined}
         />
         <SettingsGroup
           title="Comunicações e privacidade"
@@ -671,6 +789,70 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
         />
       </Phone>
     );
+
+  if (screen === "catalog") {
+    if (!user.isAdmin)
+      return (
+        <Phone>
+          <header className="nav-head">
+            <button onClick={() => setScreen("settings")}>‹</button>
+            <h1>Catálogo</h1>
+            <span />
+          </header>
+          <p className="tiny-warning">Apenas administradores podem gerenciar o catálogo.</p>
+        </Phone>
+      );
+
+    const groups = new Map<string, AdminDrink[]>();
+    for (const d of adminDrinks ?? []) {
+      const list = groups.get(d.category) ?? [];
+      list.push(d);
+      groups.set(d.category, list);
+    }
+
+    return (
+      <Phone>
+        <header className="nav-head">
+          <button onClick={() => setScreen("settings")}>‹</button>
+          <h1>Catálogo</h1>
+          <button className="red" onClick={createDrinkAdmin}>
+            ＋
+          </button>
+        </header>
+        {!adminDrinks && <p className="tiny-warning">Carregando catálogo…</p>}
+        {[...groups.entries()].map(([category, items]) => (
+          <div key={category}>
+            <p className="menu-label">{category}</p>
+            <section className="community-list">
+              {items.map((d) => (
+                <div key={d.id} className="community" style={{ height: "auto", padding: "12px 16px", gap: 4 }}>
+                  <i>{d.icon}</i>
+                  <span>
+                    <b>
+                      {d.name} {d.active !== 1 && <em style={{ fontSize: 12, color: "var(--red)" }}>(inativa)</em>}
+                    </b>
+                    <small>{d.abv}% teor alcoólico</small>
+                  </span>
+                  <span style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => editDrinkAdmin(d)} style={{ border: 0, background: "transparent", color: "white", fontSize: 20 }}>
+                      ✎
+                    </button>
+                    <button
+                      onClick={() => toggleDrinkActive(d)}
+                      style={{ border: 0, background: "transparent", color: d.active === 1 ? "var(--red)" : "#62c978", fontSize: 20 }}
+                    >
+                      {d.active === 1 ? "⏸" : "▶"}
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </section>
+          </div>
+        ))}
+        <p className="tiny-warning">Bebidas desativadas somem do catálogo dos usuários, mas continuam nos check-ins já feitos.</p>
+      </Phone>
+    );
+  }
 
   if (screen === "communities")
     return (
@@ -978,7 +1160,7 @@ export default function HomeClient({ initialUser, signOutPath }: { initialUser: 
                           <h3>{item.title}</h3>
                           <span>
                             <Avatar text={item.userInitials} />
-                            {item.userName} · {item.points} pts
+                            {item.userName} · {item.points} pts{item.photoVerified === 1 ? " · 🤖✓ foto verificada" : ""}
                           </span>
                         </div>
                         <time>{formatTime(item.createdAt)}</time>

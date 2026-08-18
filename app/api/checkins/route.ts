@@ -12,6 +12,8 @@ import {
   unitToMl,
 } from "../../../lib/scoring";
 import { moderateText, RESPONSIBLE_DRINKING_NOTICE } from "../../../lib/moderation";
+import { getPhoto } from "../../../lib/photos";
+import { verifyDrinkPhoto } from "../../../lib/photo-verification";
 import { toRouteErrorMessage } from "../../../lib/route-errors";
 
 export async function GET(request: Request) {
@@ -46,6 +48,7 @@ export async function GET(request: Request) {
         unitLabel: checkins.unitLabel,
         points: checkins.points,
         photoKey: checkins.photoKey,
+        photoVerified: checkins.photoVerified,
         createdAt: checkins.createdAt,
         drinkName: drinks.name,
         drinkIcon: drinks.icon,
@@ -140,6 +143,22 @@ export async function POST(request: Request) {
     const points = pointsForGrams(grams);
     const moderation = moderateText(title, payload.description);
 
+    // Best-effort image check — never blocks the check-in just because the
+    // AI call itself failed or the binding isn't available.
+    let photoVerified: number | null = null;
+    try {
+      const photoObject = await getPhoto(photoKey);
+      if (photoObject) {
+        const verification = await verifyDrinkPhoto(await photoObject.arrayBuffer());
+        if (verification.verified === false) {
+          return Response.json({ error: verification.reason }, { status: 400 });
+        }
+        photoVerified = verification.verified === true ? 1 : null;
+      }
+    } catch {
+      // Ignore — photoVerified stays null, the check-in still goes through.
+    }
+
     const [checkin] = await db
       .insert(checkins)
       .values({
@@ -153,6 +172,7 @@ export async function POST(request: Request) {
         amountMl,
         points,
         photoKey,
+        photoVerified,
         flagged: moderation.flagged ? 1 : 0,
       })
       .returning();

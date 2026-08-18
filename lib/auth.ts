@@ -5,13 +5,16 @@ import { users } from "../db/schema";
 import { getChatGPTUser, chatGPTSignInPath, type ChatGPTUser } from "../app/chatgpt-auth";
 
 // Emails granted catalog-management rights. Edit this list to add admins.
-const ADMIN_EMAILS = new Set<string>([]);
+// The dev-local fallback email is included so the admin screens are
+// reachable in `npm run dev`; it never matches a real ChatGPT sign-in.
+const ADMIN_EMAILS = new Set<string>(["dev-local@beerrats.app"]);
 
 export type AppUser = {
   id: number;
   email: string;
   displayName: string;
   isAdmin: boolean;
+  ageConfirmed: boolean;
 };
 
 // Local `npm run dev` never receives the `oai-authenticated-user-email`
@@ -55,14 +58,14 @@ export async function getOrCreateUser(chatGPTUser: ChatGPTUser): Promise<AppUser
     if (row.displayName !== displayName || (row.isAdmin === 1) !== (isAdmin === 1)) {
       await db.update(users).set({ displayName, isAdmin }).where(eq(users.id, row.id));
     }
-    return { id: row.id, email: row.email, displayName, isAdmin: isAdmin === 1 };
+    return { id: row.id, email: row.email, displayName, isAdmin: isAdmin === 1, ageConfirmed: row.ageConfirmed === 1 };
   }
 
   const [created] = await db
     .insert(users)
     .values({ email, displayName, isAdmin })
     .returning();
-  return { id: created.id, email: created.email, displayName, isAdmin: isAdmin === 1 };
+  return { id: created.id, email: created.email, displayName, isAdmin: isAdmin === 1, ageConfirmed: false };
 }
 
 export function avatarInitials(displayName: string): string {

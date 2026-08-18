@@ -23,12 +23,28 @@ Scripts that need writable project-scoped home, npm, XDG, and temporary paths us
 
 - edit site code under `app/`
 - `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
+- `.openai/hosting.json` declares optional Sites D1, R2, and Workers AI bindings
 - `vite.config.ts` simulates declared bindings for local development
 - `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
 - `db/schema.ts` starts intentionally empty
 - `examples/d1/` contains an optional D1 example surface
 - `drizzle.config.ts` supports local migration generation when needed
+
+### Workers AI binding (`ai` in `.openai/hosting.json`)
+
+Unlike D1 and R2, Workers AI has no offline local emulator — even
+`npm run dev` calls Cloudflare's real inference API for it. Wiring it
+unconditionally would make the dev server require `wrangler login` to start
+at all, so it's off by default locally. To exercise it in `npm run dev`:
+
+1. `npx wrangler login`
+2. `SITES_ENABLE_LOCAL_AI_BINDING=1 npm run dev`
+
+Whether the deployed Worker actually gets an `AI` binding depends on
+whether the hosting platform reads that `ai` key the same way it reads `d1`
+and `r2` — that is unverified for this project's original hosting platform.
+Any code reading `env.AI` must keep working if the binding is simply absent
+(see `lib/photo-verification.ts`).
 
 ## Workspace Auth Headers
 
